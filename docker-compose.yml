@@ -1,0 +1,77 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: django_app
+    image: mdt-bot-backend
+    volumes:
+      - ./mdt_backend/static:/static
+      - ./mdt_backend:/app
+    command: >
+      sh -c "
+        python manage.py migrate &&
+        python manage.py collectstatic --noinput &&
+        gunicorn traffic_bot_server.wsgi:application --bind 0.0.0.0:8000
+      "
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    environment:
+      - DEBUG=1
+      - DJANGO_SETTINGS_MODULE=traffic_bot_server.settings
+      - DJANGO_SUPERUSER_USERNAME=admin
+      - DJANGO_SUPERUSER_PASSWORD=admin
+      - DATABASE_URL=sqlite:////app/db/db.sqlite3
+      - PYPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
+  frontend:
+    build:
+      context: ./mdt_frontend
+      dockerfile: Dockerfile
+    container_name: react_app
+    image: mdt-bot-frontend
+    volumes:
+      - django_static:/usr/share/nginx/html/static
+      - ./mdt_frontend:/app
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+  redis:
+    image: redis:6.2.6
+    container_name: redis_server
+    ports:
+      - 6379:6379
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: celery_worker
+    command: >
+      sh -c "
+        python manage.py migrate &&
+        celery -A traffic_bot_server worker --concurrency=32 -l info
+      "
+    environment:
+      - DJANGO_SETTINGS_MODULE=traffic_bot_server.settings
+      - PYPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+    depends_on:
+      - backend
+      - redis
+    volumes:
+      - ./mdt_backend/traffic_bot_server:/app/mdt_backend/traffic_bot_server
+      - ./templates:/app/templates
+    shm_size: '2gb'
+
+volumes:
+  django_static:
+  redis_data:
